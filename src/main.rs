@@ -8,6 +8,7 @@ use sqlx::{Postgres, Pool, Row};
 use sqlx::postgres::{PgPoolOptions, PgRow};
 use uuid::{Uuid};
 use chrono::{DateTime, Utc};
+use futures_util::{StreamExt, TryStreamExt};
 use serde_json::{Value, json};
 
 #[tokio::main]
@@ -20,14 +21,18 @@ async fn main() -> Result<(), sqlx::Error> {
     // println!("{:?}", distinct_clients);
     let db_url = "postgres://postgres:postgrespassword@localhost/postgres";
     let ds = DataStore::new(db_url).await?;
+    let ds_ref = &ds;
 
-    for device in list.into_iter() {
-        let client_id = ds.find_client(device.client.clone().unwrap()).await?;
-        let e = Equipment::from(device, client_id);
-        let eff = ds.insert_equipment(e).await?;
-        println!("effect: {}", eff);
-    }
+    let flow = tokio_stream::iter(list)
+        .for_each_concurrent(128, |device| async move {
+            let client_id = ds_ref.find_client(device.client.clone().unwrap()).await.unwrap();
+            let e = Equipment::from(device, client_id.clone());
+            let eff = ds_ref.insert_equipment(e).await.unwrap();
+            println!("effect: {}", eff);
+        });
 
+    flow.await;
+    println!("Done!");
     Ok(())
 }
 
