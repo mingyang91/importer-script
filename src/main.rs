@@ -23,15 +23,20 @@ async fn main() -> Result<(), sqlx::Error> {
     let ds = DataStore::new(db_url).await?;
     let ds_ref = &ds;
 
-    let flow = tokio_stream::iter(list)
-        .for_each_concurrent(128, |device| async move {
-            let client_id = ds_ref.find_client(device.client.clone().unwrap()).await.unwrap();
+    let either_list: Vec<sqlx::Result<Device>> = list.into_iter()
+        .map(|x| Ok(x))
+        .collect();
+    let stream = tokio_stream::iter(either_list);
+    let flow = stream
+        .try_for_each_concurrent(128, |device| async move {
+            let client_id = ds_ref.find_client(device.client.clone().unwrap()).await?;
             let e = Equipment::from(device, client_id.clone());
-            let eff = ds_ref.insert_equipment(e).await.unwrap();
+            let eff = ds_ref.insert_equipment(e).await?;
             println!("effect: {}", eff);
+            Ok(())
         });
 
-    flow.await;
+    flow.await?;
     println!("Done!");
     Ok(())
 }
